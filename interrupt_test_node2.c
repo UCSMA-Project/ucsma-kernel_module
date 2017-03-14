@@ -36,6 +36,7 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
 
   spin_lock_irqsave(&driver_lock, flags);
   gpio_set_value(unlock_gpios[0].gpio, 1);
+  udelay(1);
   gpio_set_value(unlock_gpios[0].gpio, 0);
   // printk(KERN_INFO "[Interrupt test] emit GPIO\n");
   
