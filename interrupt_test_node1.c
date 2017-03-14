@@ -10,6 +10,7 @@
 
 
 #define TEST_INTERVAL	2
+#define MAX_TEST_COUNT 10000
 
 struct gpio unlock_gpios[] = {
   {21, GPIOF_OUT_INIT_LOW, "UNLOCK_OUT"},
@@ -20,6 +21,7 @@ struct irq_latency_test {
   struct timespec start, end;
   struct timer_list timer;
   u32 test_count, missed_count, max_count;
+  u16 results[MAX_TEST_COUNT];
   unsigned long avg_nsecs, min_nsecs, max_nsecs;
 };
 
@@ -53,6 +55,7 @@ static void interrupt_test_node1_timer_handler(unsigned long ptr) {
       data->avg_nsecs = (data->avg_nsecs * data->test_count + delta.tv_nsec) / (data->test_count + 1);
       data->max_nsecs = (delta.tv_nsec > data->max_nsecs) ? delta.tv_nsec : data->max_nsecs;
       data->min_nsecs = (delta.tv_nsec < data->min_nsecs || !data->min_nsecs) ? delta.tv_nsec : data->min_nsecs;
+      data->results[data->test_count] = delta.tv_nsec;
       test_ok = 1;
     }
   }
@@ -61,6 +64,10 @@ static void interrupt_test_node1_timer_handler(unsigned long ptr) {
   }
 
   if (test_ok && ++data->test_count >= data->max_count) {
+    printk(KERN_INFO "[Interrupt test] [%u", data->results[0]);
+    for (i = 1; i < data->max_count; i++)
+      printk(", %u", data->results[i]);
+    printk("]\n");
     printk(KERN_INFO "[Interrupt test] finished %u passes. average GPIO IRQ latency is %lu nsecs, "
                       "minimum latency is %lu nsecs, maximum latency is %lu nsecs\n",
           data->max_count, data->avg_nsecs, data->min_nsecs, data->max_nsecs);
@@ -92,6 +99,8 @@ static int __init unlock_init(void)
   test_data.timer.function = interrupt_test_node1_timer_handler;
   add_timer(&test_data.timer);
 
+  if (test_count > MAX_TEST_COUNT)
+    test_count = MAX_TEST_COUNT;
   test_data.max_count = test_count;
   printk(KERN_INFO "[Interrupt test] beginning GPIO IRQ latency test %u passes\n",
     test_data.max_count);
