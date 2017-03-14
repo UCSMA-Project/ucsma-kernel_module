@@ -53,7 +53,7 @@ fail:
 static void __exit unlock_exit(void)
 {
   gpio_free_array(unlock_gpios, ARRAY_SIZE(unlock_gpios));
-  printk(KERN_INFO "[Interrupt test] Uninit");
+  printk(KERN_INFO "[Interrupt test] Uninit\n");
   return;
 }
 
