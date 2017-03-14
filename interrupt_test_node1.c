@@ -69,8 +69,8 @@ static void interrupt_test_node1_timer_handler(unsigned long ptr) {
       printk(", %u", data->results[i]);
     printk("]\n");
     printk(KERN_INFO "[Interrupt test] finished %u passes. average GPIO IRQ latency is %lu nsecs, "
-                      "minimum latency is %lu nsecs, maximum latency is %lu nsecs\n",
-          data->max_count, data->avg_nsecs, data->min_nsecs, data->max_nsecs);
+                      "minimum latency is %lu nsecs, maximum latency is %lu nsecs. Missed IRQ: %u\n",
+          data->max_count, data->avg_nsecs, data->min_nsecs, data->max_nsecs, data->missed_count);
     return;
   }
 
