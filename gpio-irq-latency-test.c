@@ -36,7 +36,7 @@ MODULE_PARM_DESC(gpio_out, "GPIO_OUT");
 
 struct irq_latency_test {
 	struct timespec gpio_time, irq_time;
-	u16 irq;
+	u16 irq, results[NUM_TESTS];
 	u16 irq_pin, gpio_pin;
 	u8 irq_fired, irq_enabled;
 	struct timer_list timer;
@@ -59,6 +59,7 @@ static irqreturn_t test_irq_latency_interrupt_handler(int irq, void* dev_id) {
 
 static void test_irq_latency_timer_handler(unsigned long ptr) {
 	struct irq_latency_test* data = (struct irq_latency_test*)ptr;
+	int i;
 	u8 test_ok = 0;
 	
 	if (data->irq_fired) {
@@ -70,6 +71,7 @@ static void test_irq_latency_timer_handler(unsigned long ptr) {
 				data->missed_irqs++;
 			} else {
 				data->avg_nsecs = (data->avg_nsecs * data->test_count + delta.tv_nsec) / (data->test_count + 1);
+				data->results[data->test_count] = delta.tv_nsec;
 				
 				test_ok = 1;
 			}
@@ -80,6 +82,10 @@ static void test_irq_latency_timer_handler(unsigned long ptr) {
 	}
 
 	if (test_ok && ++data->test_count >= NUM_TESTS) {
+		printk(KERN_INFO DRV_NAME " [%u", data->results[0]);
+		for (i = 1; i < NUM_TESTS; i++)
+			printk(", %u", data->results[i]);
+		printk("]\n");
 		printk(KERN_INFO DRV_NAME
 			" : finished %u passes. average GPIO IRQ latency is %lu nsecs. %lu missed IRQs\n",
 				NUM_TESTS, data->avg_nsecs, data->missed_irqs);
