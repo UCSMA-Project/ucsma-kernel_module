@@ -7,10 +7,6 @@
 #include <linux/sched.h>
 #include <linux/delay.h>
 
-#define POLL_TIME 200
-#define BACKOFF_TIME 100
-#define MAX_COUNT 2
-
 struct gpio unlock_gpios[] = {
   {21, GPIOF_OUT_INIT_LOW, "UNLOCK_OUT"},
   {22, GPIOF_IN, "UNLOCK_IN" },
@@ -24,9 +20,13 @@ struct gpio unlock_gpios[] = {
  */
 extern struct ath_hw *ath9k_ah;
 
-// sleep delay time parameter, defines how long (in us) to sleep after setting FORCE_QUIET_BIT
-static u32 sleep_delay = 0;
-module_param(sleep_delay, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+// backoff param Delta, define how long to sleep (in us) before device can start to compete for CSMA again
+static u32 Delta = 100;
+module_param(Delta, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+
+// period param T, define how often (in us) to send unlocking signal
+static u32 T = 20000;	// initial value 20ms
+module_param(T, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
 /* FD that we use to keep track of incoming unlock signals */
 short int unlock_irq = 0;
@@ -36,22 +36,13 @@ short int unlock_irq = 0;
  * the incoming unlock interrupt
  */
 unsigned long flags;
-u32 unlock_count = 0, gpio_irq_count = 0;
 
-long last_interrupt_time = 0;
+// last time of unlocking and 2nd last time of unlocking
 
-/* 
- * Timer used to periodically poll Carrier Sense Timeout
- * to see how long TX has been delayed beacuse of 
- * RX_CLEAR being low
- */
-struct timer_list cts_poll, gpio_poll;
+struct timespec last_unlock, last_unlock_2nd;
 
-/* Work that performs cts poll and propogates unlock signal */
-static struct work_struct cts_poll_work;
-
-/* Work Queue where all pending unlock operations are inserted */
-static struct workqueue_struct *unlock_queue;
+// Timer used to periodically send out unlocking signal
+struct timer_list unlock_timer;
 
 /* 
  * Spin Lock used to guarantee that a single unlock
@@ -59,70 +50,58 @@ static struct workqueue_struct *unlock_queue;
  */
 DEFINE_SPINLOCK(driver_lock);
 
-/* function that performs unlock mechanism and propogates unlock */
-void unlock_work_direct(void) {
-  // gpio_set_value(unlock_gpios[0].gpio, 1);
-  unlock_count++;
-  if (unlock_count % 10000 == 0) {
-    printk(KERN_INFO "unlock done %d times\n", unlock_count);
-  }
-
-  REG_SET_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
-  // printk(KERN_INFO "U-CSMA set write ack %x\n", REG_READ(ath9k_ah, AR_PCU_MISC) & AR_PCU_FORCE_QUIET_COLL);
-  udelay(sleep_delay);
-  REG_CLR_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
-  // printk(KERN_INFO "U-CSMA reset write ack %x\n", REG_READ(ath9k_ah, AR_PCU_MISC) & AR_PCU_FORCE_QUIET_COLL);
-
-  // gpio_set_value(unlock_gpios[0].gpio, 0);
-
-  return;
-}
-
-/* Work that polls how long it has been since last transmission */
-static void poll_work(struct work_struct *work)
-{
-  u32 val;
-
-  val = REG_READ(ath9k_ah, AR_CST);
-  // printk(KERN_INFO "U-CSMA Poll Work %d\n", val & AR_CST_TIMEOUT_COUNTER);
-
-  if ((val & AR_CST_TIMEOUT_COUNTER) > MAX_COUNT){
-    gpio_set_value(unlock_gpios[0].gpio, 1);
-    udelay(1);
-    gpio_set_value(unlock_gpios[0].gpio, 0);
-  }
-
-  mod_timer(&cts_poll, jiffies + usecs_to_jiffies(POLL_TIME));
-  return;
+static void unlock_timer_handler(unsigned long ptr) {
+  gpio_set_value(unlock_gpios[0].gpio, 1);
+  gpio_set_value(unlock_gpios[0].gpio, 0);
 }
 
 /* Interrupt handler called on falling edfe of UNLOCK_IN GPIO */
 static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
-  long interrupt_time = jiffies;
-
+  struct timespec now, diff;
+  unsigned int next_timer, backoff, rng;
   spin_lock_irqsave(&driver_lock, flags);
-  gpio_irq_count++;
-  if (gpio_irq_count % 10000 == 0) {
-    printk(KERN_INFO "GPIO IRQ triggerd %d times\n", gpio_irq_count);
+  getnstimeofday(&now);
+  diff = timespec_sub(now, last_unlock);
+  if (diff.tv_sec || diff.tv_nsec < T * 500) {
+    spin_unlock_irqrestore(&driver_lock, flags);
+    return IRQ_HANDLED;
   }
   // printk(KERN_INFO "irq called\n");
   
-  //if (interrupt_time - last_interrupt_time >= usecs_to_jiffies(BACKOFF_TIME)) {
-    // printk(KERN_INFO "U-CSMA scheduled tasklet\n");
-    unlock_work_direct();
+  del_timer(&unlock_timer);	//stop timer from being fire up
 
-    last_interrupt_time = interrupt_time;
-  //}
+  gpio_set_value(unlock_gpios[0].gpio, 1);	//relay the unlocking signal
+  gpio_set_value(unlock_gpios[0].gpio, 0);
+
+  get_random_bytes(&rng, sizeof(rng));
+  rng %= (Delta + Delta);
+  diff = timespec_sub(last_unlock, last_unlock_2nd);
+  if (diff.tv_sec || diff.tv_nsec <= T * 1000)
+    next_timer = T + rng;
+  else
+    next_timer = T - rng;
+
+  last_unlock_2nd.tv_sec = last_unlock.tv_sec;
+  last_unlock_2nd.tv_nsec = last_unlock.tv_nsec;
+  last_unlock.tv_sec = now.tv_sec;
+  last_unlock.tv_nsec = now.tv_nsec;
+
+  get_random_bytes(&backoff, sizeof(backoff));
+  backoff %= (Delta + Delta);
+
+  REG_SET_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
+  ndelay(backoff * 1000);
+  REG_CLR_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
+
+  next_timer -= backoff;
+  if (next_timer < 0)
+    next_timer = 0;
+
+  mod_timer(&unlock_timer, jiffies + usecs_to_jiffies(next_timer));
 
   spin_unlock_irqrestore(&driver_lock, flags);
 
   return IRQ_HANDLED;
-}
-
-/* Timer handler called to poll CTS TIMEOUT */
-void cts_handler(unsigned long data) {
-  queue_work(unlock_queue, &cts_poll_work);
-  return;
 }
 
 /* Entry point of driver */
@@ -132,12 +111,9 @@ static int __init unlock_init(void)
 
   printk(KERN_INFO "U-CSMA - unlock inserted");
 
-  /* Create workqueue and work items */
-  unlock_queue = create_workqueue("U-CSMA");
-  INIT_WORK(&cts_poll_work, poll_work);
-
   /* Initialize CTS poll timer */
-  setup_timer(&cts_poll, cts_handler, (unsigned long) ath9k_ah);
+  setup_timer(&unlock_timer, unlock_timer_handler, (unsigned long)&unlock_gpios);
+  getnstimeofday(&last_unlock);
 
   /* Get access to GPIOS for recieving and propogating unlock signal */
   if ((ret = gpio_request_array(unlock_gpios, ARRAY_SIZE(unlock_gpios)))) {
@@ -160,14 +136,10 @@ static int __init unlock_init(void)
   }
   
   /* Set first call of CTS to be POLL_TIME microseconds from now */
-  else if(mod_timer(&cts_poll, jiffies + usecs_to_jiffies(POLL_TIME))){
+  else if(mod_timer(&unlock_timer, jiffies + usecs_to_jiffies(T))){
     printk(KERN_ERR "U-CSMA - timer error\n");
     goto fail;
   }
-//  else if(mod_timer(&gpio_poll, jiffies + usecs_to_jiffies(10))){
-//    printk(KERN_ERR "U-CSMA - gpio timer error\n");
-//    goto fail;
-//  }
 
   printk(KERN_INFO "U-CSMA INIT complete\n");
 
@@ -182,12 +154,8 @@ fail:
 /* Exit Point of driver */
 static void __exit unlock_exit(void)
 {
-  del_timer(&cts_poll);
-  del_timer(&gpio_poll);
+  del_timer(&unlock_timer);
   free_irq(unlock_irq, "felipe device");
-
-  flush_workqueue(unlock_queue);
-  destroy_workqueue(unlock_queue);
 
   gpio_free_array(unlock_gpios, ARRAY_SIZE(unlock_gpios));
 
