@@ -2,7 +2,7 @@
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/gpio.h>
-#include <linux/timer.h>
+#include <linux/hrtimer.h>
 #include <linux/kthread.h>
 #include <linux/sched.h>
 #include <linux/delay.h>
@@ -42,7 +42,7 @@ unsigned long flags;
 struct timespec last_unlock, last_unlock_2nd;
 
 // Timer used to periodically send out unlocking signal
-struct timer_list unlock_timer;
+struct hrtimer unlock_timer;
 
 /* 
  * Spin Lock used to guarantee that a single unlock
@@ -50,9 +50,10 @@ struct timer_list unlock_timer;
  */
 DEFINE_SPINLOCK(driver_lock);
 
-static void unlock_timer_handler(unsigned long ptr) {
+static enum hrtimer_restart unlock_timer_handler(struct hrtimer *timer) {
   gpio_set_value(unlock_gpios[0].gpio, 1);
   gpio_set_value(unlock_gpios[0].gpio, 0);
+  return HRTIMER_NORESTART;
 }
 
 /* Interrupt handler called on falling edfe of UNLOCK_IN GPIO */
@@ -67,8 +68,8 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
     return IRQ_HANDLED;
   }
   // printk(KERN_INFO "irq called\n");
-  
-  del_timer(&unlock_timer);	//stop timer from being fire up
+
+  hrtimer_cancel(&unlock_timer);	//stop timer from being fire up
 
   gpio_set_value(unlock_gpios[0].gpio, 1);	//relay the unlocking signal
   gpio_set_value(unlock_gpios[0].gpio, 0);
@@ -97,7 +98,7 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
   if (next_timer < 0)
     next_timer = 0;
 
-  mod_timer(&unlock_timer, jiffies + usecs_to_jiffies(next_timer));
+  hrtimer_start(&unlock_timer, ktime_set(0, next_timer * 1000), HRTIMER_MODE_REL);
 
   spin_unlock_irqrestore(&driver_lock, flags);
 
@@ -112,7 +113,9 @@ static int __init unlock_init(void)
   printk(KERN_INFO "U-CSMA - unlock inserted");
 
   /* Initialize CTS poll timer */
-  setup_timer(&unlock_timer, unlock_timer_handler, (unsigned long)&unlock_gpios);
+  hrtimer_init(&unlock_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+  unlock_timer.function = unlock_timer_handler;
+
   getnstimeofday(&last_unlock);
 
   /* Get access to GPIOS for recieving and propogating unlock signal */
@@ -134,12 +137,8 @@ static int __init unlock_init(void)
     printk(KERN_ERR "U-CSMA - unable to get IRQ\n");
     goto fail;
   }
-  
-  /* Set first call of CTS to be POLL_TIME microseconds from now */
-  else if(mod_timer(&unlock_timer, jiffies + usecs_to_jiffies(T))){
-    printk(KERN_ERR "U-CSMA - timer error\n");
-    goto fail;
-  }
+
+  hrtimer_start(&unlock_timer, ktime_set(0, T * 1000), HRTIMER_MODE_REL);
 
   printk(KERN_INFO "U-CSMA INIT complete\n");
 
@@ -154,7 +153,7 @@ fail:
 /* Exit Point of driver */
 static void __exit unlock_exit(void)
 {
-  del_timer(&unlock_timer);
+  hrtimer_cancel(&unlock_timer);
   free_irq(unlock_irq, "felipe device");
 
   gpio_free_array(unlock_gpios, ARRAY_SIZE(unlock_gpios));
