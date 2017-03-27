@@ -40,12 +40,9 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
 
   if (cur_count < RECORD_COUNT) {
     getnstimeofday(&records[cur_count++]);
-  }
-  else if (cur_count == RECORD_COUNT) {
-    cur_count++;
-    for (i = 0; i < RECORD_COUNT; i++) {
-      printk("%lu.%09lu\n", records[i].tv_sec,  records[i].tv_nsec);
-    }
+    if (cur_count == RECORD_COUNT)
+      for (i = 0; i < RECORD_COUNT; i++)
+        printk("%lu.%09lu\n", records[i].tv_sec,  records[i].tv_nsec);
   }
   
   spin_unlock_irqrestore(&driver_lock, flags);
