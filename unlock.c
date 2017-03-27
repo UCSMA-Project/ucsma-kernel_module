@@ -52,6 +52,7 @@ DEFINE_SPINLOCK(driver_lock);
 
 static enum hrtimer_restart unlock_timer_handler(struct hrtimer *timer) {
   gpio_set_value(unlock_gpios[0].gpio, 1);
+  udelay(1);
   gpio_set_value(unlock_gpios[0].gpio, 0);
   return HRTIMER_NORESTART;
 }
@@ -72,6 +73,7 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
   hrtimer_cancel(&unlock_timer);	//stop timer from being fire up
 
   gpio_set_value(unlock_gpios[0].gpio, 1);	//relay the unlocking signal
+  udelay(1);
   gpio_set_value(unlock_gpios[0].gpio, 0);
 
   get_random_bytes(&rng, sizeof(rng));
