@@ -44,6 +44,9 @@ struct timespec last_unlock, last_unlock_2nd;
 // Timer used to periodically send out unlocking signal
 struct hrtimer unlock_timer;
 
+// clock timer for slottime, sifs, eifs;
+u32 slottime_clock, sifs_clock, eifs_clock;
+
 /* 
  * Spin Lock used to guarantee that a single unlock
  * interrupt is handled at a time 
@@ -93,10 +96,11 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
   backoff %= (Delta + Delta);
 
   REG_SET_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
-  REG_SET_BIT(ath9k_ah, AR_D_GBL_IFS_MISC, AR_D_GBL_IFS_MISC_IGNORE_BACKOFF);
+  REG_WRITE(ath9k_ah, AR_D_GBL_IFS_EIFS,
+    sifs_clock + slottime_clock * ath9k_ah->txq[ATH_TXQ_AC_BE].tqi_aifs);
   ndelay(backoff * 1000);
-  REG_CLR_BIT(ath9k_ah, AR_D_GBL_IFS_MISC, AR_D_GBL_IFS_MISC_IGNORE_BACKOFF);
   ath9k_ah->unlocked = true;
+  REG_WRITE(ath9k_ah, AR_D_GBL_IFS_EIFS, eifs_clock);
   getnstimeofday(&ath9k_ah->last_force_quiet_restore);
   REG_CLR_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
 
@@ -122,6 +126,12 @@ static int __init unlock_init(void)
   ath9k_ah->unlocking_logging = true;
   ath9k_ah->force_quiet_bit_restore = true;
   ath9k_ah->max_timing_count = 10;
+
+  /* read some regs in the adapter */
+  slottime_clock = REG_READ(ath9k_ah, AR_D_GBL_IFS_SLOT);
+  sifs_clock = REG_READ(ath9k_ah, AR_D_GBL_IFS_SIFS);
+  eifs_clock = REG_READ(ath9k_ah, AR_D_GBL_IFS_EIFS);
+  printk(KERN_INFO "sifs: %u, eifs: %u, slottime: %u\n", sifs_clock, eifs_clock, slottime_clock);
 
   /* Initialize CTS poll timer */
   hrtimer_init(&unlock_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
