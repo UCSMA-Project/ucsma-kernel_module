@@ -93,7 +93,11 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
   backoff %= (Delta + Delta);
 
   REG_SET_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
+  REG_SET_BIT(ath9k_ah, AR_D_GBL_IFS_MISC, AR_D_GBL_IFS_MISC_IGNORE_BACKOFF);
   ndelay(backoff * 1000);
+  REG_CLR_BIT(ath9k_ah, AR_D_GBL_IFS_MISC, AR_D_GBL_IFS_MISC_IGNORE_BACKOFF);
+  ath9k_ah->unlocked = true;
+  getnstimeofday(&ath9k_ah->last_force_quiet_restore);
   REG_CLR_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
 
   next_timer -= backoff;
@@ -113,6 +117,11 @@ static int __init unlock_init(void)
   int ret;
 
   printk(KERN_INFO "U-CSMA - unlock inserted");
+
+  /* enable unlcoking logging in driver */
+  ath9k_ah->unlocking_logging = true;
+  ath9k_ah->force_quiet_bit_restore = true;
+  ath9k_ah->max_timing_count = 10;
 
   /* Initialize CTS poll timer */
   hrtimer_init(&unlock_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -159,6 +168,12 @@ static void __exit unlock_exit(void)
   free_irq(unlock_irq, "felipe device");
 
   gpio_free_array(unlock_gpios, ARRAY_SIZE(unlock_gpios));
+
+  /* disable unlcoking logging in driver */
+  ath9k_ah->unlocking_logging = false;
+  ath9k_ah->unlocked = false;
+  ath9k_ah->force_quiet_bit_restore = false;
+  ath9k_ah->max_timing_count = 0;
 
   printk(KERN_INFO "U-CSMA - unlock module unloaded\n");
   return;
