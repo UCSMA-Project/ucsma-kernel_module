@@ -96,11 +96,8 @@ static irqreturn_t unlock_r_irq_handler(int irq, void *dev_id) {
   backoff %= (Delta + Delta);
 
   REG_SET_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
-  REG_WRITE(ath9k_ah, AR_D_GBL_IFS_EIFS,
-    sifs_clock + slottime_clock * ath9k_ah->txq[ATH_TXQ_AC_BE].tqi_aifs);
   ndelay(backoff * 1000);
   ath9k_ah->unlocked = true;
-  REG_WRITE(ath9k_ah, AR_D_GBL_IFS_EIFS, eifs_clock);
   getnstimeofday(&ath9k_ah->last_force_quiet_restore);
   REG_CLR_BIT(ath9k_ah, AR_PCU_MISC, AR_PCU_FORCE_QUIET_COLL);
 
