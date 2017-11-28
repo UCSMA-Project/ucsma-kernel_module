@@ -81,7 +81,7 @@ static enum hrtimer_restart unlock_timer_handler(struct hrtimer *timer) {
       print_log();
   }
 
-  hrtimer_forward(timer, ktime_set(0, T * 1000));
+  hrtimer_forward_now(timer, ktime_set(0, T * 1000));
 
   return HRTIMER_NORESTART;
 }
