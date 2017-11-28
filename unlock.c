@@ -57,7 +57,10 @@ static enum hrtimer_restart unlock_timer_handler(struct hrtimer *timer) {
   gpio_set_value(unlock_gpios[0].gpio, 1);
   udelay(1);
   gpio_set_value(unlock_gpios[0].gpio, 0);
-  return HRTIMER_NORESTART;
+
+  hrtimer_forward(timer, ktime_set(0, T * 1000));
+
+  return HRTIMER_RESTART;
 }
 
 /* Interrupt handler called on falling edfe of UNLOCK_IN GPIO */
