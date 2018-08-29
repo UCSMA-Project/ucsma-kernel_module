@@ -7,8 +7,7 @@ ath9k-y +=	beacon.o \
 		link.o \
 		antenna.o
 
-obj-m += set_contention_window.o unlock.o flip_quiet_coll_bit.o interrupt_test_node1.o interrupt_test_node2.o gpio-irq-latency-test.o kernel_timing_test.o record_gpio_event.o \
-		unlock_with_log.o gpio_timeline.o
+obj-m += unlock.o unlock_with_log.o
 
 ath9k-$(CPTCFG_ATH9K_BTCOEX_SUPPORT) += mci.o
 ath9k-$(CPTCFG_ATH9K_PCI) += pci.o
